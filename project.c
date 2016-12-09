@@ -36,6 +36,13 @@
 //
 //*****************************************************************************
 
+/*
+    This program performs multiplexer-demultiplexer functions and muxes data from multiple UART ports onto a CAN bus
+    for de-multiplexing by another processor.
+
+    (c) 2016, Abhimanyu Ghosh
+ */
+
 #include <stdbool.h>
 #include <stdint.h>
 
