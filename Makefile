@@ -67,6 +67,10 @@ IPATH=$(ROOT)
 #
 all: ${COMPILER}
 all: ${COMPILER}/project.axf
+md5sums: all
+	md5sum $(COMPILER)/project.axf > tm4c_fsw_md5sum
+check: all
+	md5sum $(COMPILER)/project.axf > tmp && diff tmp tm4c_fsw_md5sum && rm tmp
 load: all
 	./load_fw.sh $(JLINK_ROOT)
 

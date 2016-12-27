@@ -206,14 +206,8 @@ void UART5IntHandler(void){
     // Clear the asserted interrupts.
     UARTIntClear(UART5_BASE, ulStatus);
 
-    // Loop while there are characters in the receive FIFO.
-    while(UARTCharsAvail(UART5_BASE))
-    {
-        // Read the next character from the UART and write it back to the UART.
-        unsigned char c = UARTCharGetNonBlocking(UART5_BASE);
-        // UARTCharPutNonBlocking(UART5_BASE, c);
-        can0_uart_relay(UART5, c);
-    }
+    unsigned char c = UARTCharGetNonBlocking(UART5_BASE);
+    can0_uart_relay(UART5, c);
 }
 
 void UART6IntHandler(void){
@@ -225,14 +219,8 @@ void UART6IntHandler(void){
     // Clear the asserted interrupts.
     UARTIntClear(UART6_BASE, ulStatus);
 
-    // Loop while there are characters in the receive FIFO.
-    while(UARTCharsAvail(UART6_BASE))
-    {
-        // Read the next character from the UART and write it back to the UART.
-        unsigned char c = UARTCharGetNonBlocking(UART6_BASE);
-        // UARTCharPutNonBlocking(UART6_BASE, c);
-        can0_uart_relay(UART6, c);
-    }
+    unsigned char c = UARTCharGetNonBlocking(UART6_BASE);
+    can0_uart_relay(UART6, c);
 }
 
 void UART7IntHandler(void){
@@ -244,14 +232,8 @@ void UART7IntHandler(void){
     // Clear the asserted interrupts.
     UARTIntClear(UART7_BASE, ulStatus);
 
-    // Loop while there are characters in the receive FIFO.
-    while(UARTCharsAvail(UART7_BASE))
-    {
-        // Read the next character from the UART and write it back to the UART.
-        unsigned char c = UARTCharGetNonBlocking(UART7_BASE);
-        // UARTCharPutNonBlocking(UART7_BASE, c);
-        can0_uart_relay(UART7, c);
-    }
+    unsigned char c = UARTCharGetNonBlocking(UART7_BASE);
+    can0_uart_relay(UART7, c);
 }
 
 volatile uint8_t g_bRXFlag_uart5;
@@ -292,6 +274,11 @@ void CANIntHandler(void)
         g_bErrFlag_uart5 = 1;
         g_bErrFlag_uart6 = 1;
         g_bErrFlag_uart7 = 1;
+    }
+
+    else if(ui32Status == 1)
+    {
+        CANIntClear(CAN0_BASE, 1);
     }
 
     //
@@ -430,6 +417,7 @@ int main(void)
             g_bRXFlag_uart5 = 0;
             sMsgObjectRx_uart5.pui8MsgData = can_rx_data_uart5;
             CANMessageGet(CAN0_BASE, 2, &sMsgObjectRx_uart5, 0);
+            while(UARTBusy(UART5_BASE));
             UARTCharPutNonBlocking(UART5_BASE, can_rx_data_uart5[0]);            
         }
 
@@ -438,6 +426,7 @@ int main(void)
             g_bRXFlag_uart6 = 0;
             sMsgObjectRx_uart6.pui8MsgData = can_rx_data_uart6;
             CANMessageGet(CAN0_BASE, 3, &sMsgObjectRx_uart6, 0);
+            while(UARTBusy(UART6_BASE));
             UARTCharPutNonBlocking(UART6_BASE, can_rx_data_uart6[0]);
         }
 
@@ -446,6 +435,7 @@ int main(void)
             g_bRXFlag_uart7 = 0;
             sMsgObjectRx_uart7.pui8MsgData = can_rx_data_uart7;
             CANMessageGet(CAN0_BASE, 4, &sMsgObjectRx_uart7, 0);
+            while(UARTBusy(UART7_BASE));
             UARTCharPutNonBlocking(UART7_BASE, can_rx_data_uart7[0]);
         }
 
