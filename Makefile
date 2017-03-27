@@ -50,7 +50,7 @@ JLINK_ROOT=../JLink_Linux_V480_x86_64/
 #
 # The base directory for TivaWare.
 #
-ROOT=../tivaware
+ROOT=../tivaware_old
 
 #
 # Include the common make definitions.
@@ -90,6 +90,8 @@ ${COMPILER}:
 # Rules for building the project.
 #
 ${COMPILER}/project.axf: ${COMPILER}/project.o
+${COMPILER}/project.axf: ${COMPILER}/serial_comms_highlevel.o
+${COMPILER}/project.axf: ${COMPILER}/serial_comms_highlevel_hal.o
 ${COMPILER}/project.axf: ${COMPILER}/startup_${COMPILER}.o
 ${COMPILER}/project.axf: ${ROOT}/driverlib/${COMPILER}/libdriver.a
 ${COMPILER}/project.axf: project.ld

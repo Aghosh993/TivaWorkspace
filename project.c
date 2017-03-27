@@ -40,28 +40,29 @@
     This program performs multiplexer-demultiplexer functions and muxes data from multiple UART ports onto a CAN bus
     for de-multiplexing by another processor.
 
-    (c) 2016, Abhimanyu Ghosh
+    (c) 2017, Abhimanyu Ghosh
  */
 
 #include <stdbool.h>
 #include <stdint.h>
 
-#include "inc/hw_memmap.h"
-#include "inc/hw_types.h"
-#include "inc/hw_gpio.h"
-#include "inc/hw_ints.h"
-#include "inc/hw_can.h"
+#include "hal_common_includes.h"
+#include "interrupt_utils.h"
+#include "serial_comms_highlevel.h"
 
-#include "driverlib/debug.h"
-#include "driverlib/gpio.h"
-#include "driverlib/rom.h"
-#include "driverlib/sysctl.h"
-#include "driverlib/uart.h"
-#include "driverlib/pin_map.h"
-#include "driverlib/interrupt.h"
-#include "driverlib/can.h"
+#define SERIAL_BUF_LEN  SERIAL_BUFFER_SIZE
+#define HELLO_WORLD_TEST    1
 
-// #define GPIO_TEST   1
+volatile serialport uart5_port, uart6_port, uart7_port;
+volatile serialport uart5_can_port, uart6_can_port, uart7_can_port;
+
+volatile serialport *uart5_port_ptr;
+volatile serialport *uart6_port_ptr;
+volatile serialport *uart7_port_ptr;
+
+volatile serialport *uart5_can_port_ptr;
+volatile serialport *uart6_can_port_ptr;
+volatile serialport *uart7_can_port_ptr;
 
 //*****************************************************************************
 //
@@ -75,128 +76,6 @@ __error__(char *pcFilename, uint32_t ui32Line)
 }
 #endif
 
-typedef enum {
-    UART5,
-    UART6,
-    UART7
-} uart_enum;
-
-void can0_init(void)
-{
-    SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOF);
-    while(!SysCtlPeripheralReady(SYSCTL_PERIPH_GPIOF));
-    HWREG(GPIO_PORTF_BASE + GPIO_O_LOCK) = GPIO_LOCK_KEY; //Unlock GPIO_CR register with this magic value
-    HWREG(GPIO_PORTF_BASE + GPIO_O_CR) = 0xFF;
-
-    GPIOPinConfigure(GPIO_PF0_CAN0RX);
-    GPIOPinConfigure(GPIO_PF3_CAN0TX); 
-    GPIOPinTypeCAN(GPIO_PORTF_BASE, GPIO_PIN_0 | GPIO_PIN_3);
-    SysCtlPeripheralEnable(SYSCTL_PERIPH_CAN0);
-
-    CANInit(CAN0_BASE);
-    while(!SysCtlPeripheralReady(SYSCTL_PERIPH_CAN0));
-    CANBitRateSet(CAN0_BASE, SysCtlClockGet(), 500000);
-
-    CANIntEnable(CAN0_BASE, CAN_INT_MASTER | CAN_INT_ERROR | CAN_INT_STATUS);
-    IntEnable(INT_CAN0);
-    
-    CANEnable(CAN0_BASE);
-}
-
-void can0_uart_relay(uart_enum u, uint8_t byte_to_send)
-{
-    uint8_t data = byte_to_send;
-
-    tCANMsgObject sCANMessage;
-
-    sCANMessage.ui32MsgIDMask = 0;
-    sCANMessage.ui32Flags = MSG_OBJ_TX_INT_ENABLE;
-    sCANMessage.ui32MsgLen = 1;
-    sCANMessage.pui8MsgData = &data;
-
-    switch(u)
-    {
-        case UART5:
-            sCANMessage.ui32MsgID = 0x60000001;
-            break;
-        case UART6:
-            sCANMessage.ui32MsgID = 0x60000003;
-            break;
-        case UART7:
-            sCANMessage.ui32MsgID = 0x60000005;
-            break;
-    }
-
-    CANMessageSet(CAN0_BASE, 1, &sCANMessage, MSG_OBJ_TYPE_TX);
-}
-
-void uart5_setup(void)
-{
-    SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOE);
-    while(!SysCtlPeripheralReady(SYSCTL_PERIPH_GPIOE));
-
-    SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOJ);
-    while(!SysCtlPeripheralReady(SYSCTL_PERIPH_GPIOJ));
-
-    GPIOPinConfigure(GPIO_PJ2_U5RX);
-    GPIOPinConfigure(GPIO_PE5_U5TX);
-
-    GPIOPinTypeUART(GPIO_PORTE_BASE, GPIO_PIN_5);
-    GPIOPinTypeUART(GPIO_PORTJ_BASE, GPIO_PIN_2);
-
-    SysCtlPeripheralEnable(SYSCTL_PERIPH_UART5);
-    while(!SysCtlPeripheralReady(SYSCTL_PERIPH_UART5));
-
-    UARTConfigSetExpClk(UART5_BASE, SysCtlClockGet(), 115200,
-                        (UART_CONFIG_WLEN_8 | UART_CONFIG_STOP_ONE |
-                        UART_CONFIG_PAR_NONE));
-
-    IntEnable(INT_UART5);
-    UARTIntEnable(UART5_BASE, UART_INT_RX | UART_INT_RT);
-}
-
-void uart6_setup(void)
-{
-    SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOD);
-    while(!SysCtlPeripheralReady(SYSCTL_PERIPH_GPIOD));
-
-    GPIOPinConfigure(GPIO_PD4_U6RX);
-    GPIOPinConfigure(GPIO_PD5_U6TX);
-
-    GPIOPinTypeUART(GPIO_PORTD_BASE, GPIO_PIN_4 | GPIO_PIN_5);
-
-    SysCtlPeripheralEnable(SYSCTL_PERIPH_UART6);
-    while(!SysCtlPeripheralReady(SYSCTL_PERIPH_UART6));
-
-    UARTConfigSetExpClk(UART6_BASE, SysCtlClockGet(), 115200,
-                        (UART_CONFIG_WLEN_8 | UART_CONFIG_STOP_ONE |
-                        UART_CONFIG_PAR_NONE));
-
-    IntEnable(INT_UART6);
-    UARTIntEnable(UART6_BASE, UART_INT_RX | UART_INT_RT);
-}
-
-void uart7_setup(void)
-{
-    SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOE);
-    while(!SysCtlPeripheralReady(SYSCTL_PERIPH_GPIOE));
-
-    GPIOPinConfigure(GPIO_PE0_U7RX);
-    GPIOPinConfigure(GPIO_PE1_U7TX);
-
-    GPIOPinTypeUART(GPIO_PORTE_BASE, GPIO_PIN_0 | GPIO_PIN_1);
-
-    SysCtlPeripheralEnable(SYSCTL_PERIPH_UART7);
-    while(!SysCtlPeripheralReady(SYSCTL_PERIPH_UART7));
-
-    UARTConfigSetExpClk(UART7_BASE, SysCtlClockGet(), 115200,
-                        (UART_CONFIG_WLEN_8 | UART_CONFIG_STOP_ONE |
-                        UART_CONFIG_PAR_NONE));
-
-    IntEnable(INT_UART7);
-    UARTIntEnable(UART7_BASE, UART_INT_RX | UART_INT_RT);
-}
-
 void UART5IntHandler(void){
     unsigned long ulStatus;
 
@@ -206,8 +85,15 @@ void UART5IntHandler(void){
     // Clear the asserted interrupts.
     UARTIntClear(UART5_BASE, ulStatus);
 
-    unsigned char c = UARTCharGetNonBlocking(UART5_BASE);
-    can0_uart_relay(UART5, c);
+    if(ulStatus & UART_INT_TX)
+    {
+        serialport_highlevel_tx_isr(uart5_port_ptr);
+    }
+
+    if(ulStatus & UART_INT_RX)
+    {
+        serialport_highlevel_rx_isr(uart5_port_ptr);
+    }
 }
 
 void UART6IntHandler(void){
@@ -219,8 +105,15 @@ void UART6IntHandler(void){
     // Clear the asserted interrupts.
     UARTIntClear(UART6_BASE, ulStatus);
 
-    unsigned char c = UARTCharGetNonBlocking(UART6_BASE);
-    can0_uart_relay(UART6, c);
+    if(ulStatus & UART_INT_TX)
+    {
+        serialport_highlevel_tx_isr(uart6_port_ptr);
+    }
+
+    if(ulStatus & UART_INT_RX)
+    {
+        serialport_highlevel_rx_isr(uart6_port_ptr);
+    }
 }
 
 void UART7IntHandler(void){
@@ -232,218 +125,295 @@ void UART7IntHandler(void){
     // Clear the asserted interrupts.
     UARTIntClear(UART7_BASE, ulStatus);
 
-    unsigned char c = UARTCharGetNonBlocking(UART7_BASE);
-    can0_uart_relay(UART7, c);
+    if(ulStatus & UART_INT_TX)
+    {
+        serialport_highlevel_tx_isr(uart7_port_ptr);
+    }
+
+    if(ulStatus & UART_INT_RX)
+    {
+        serialport_highlevel_rx_isr(uart7_port_ptr);
+        // uint8_t c = (uint8_t)UARTCharGetNonBlocking(UART7_BASE);
+        // UARTCharPut(UART7_BASE, c);
+    }
 }
 
-volatile uint8_t g_bRXFlag_uart5;
-volatile uint8_t g_bErrFlag_uart5;
+volatile uint8_t can_err_flag;
+volatile uint32_t can_err_counter;
 
-volatile uint8_t g_bRXFlag_uart6;
-volatile uint8_t g_bErrFlag_uart6;
-
-volatile uint8_t g_bRXFlag_uart7;
-volatile uint8_t g_bErrFlag_uart7;
+volatile uint32_t can_tx_ok_counter;
+volatile uint32_t can_rx_ok_counter;
 
 void CANIntHandler(void)
 {
+    tCANMsgObject sMsgObjectRx;
     uint32_t ui32Status;
+    uint8_t msg_data[8];
+    sMsgObjectRx.pui8MsgData = msg_data;
 
     //
     // Read the CAN interrupt status to find the cause of the interrupt
     //
     ui32Status = CANIntStatus(CAN0_BASE, CAN_INT_STS_CAUSE);
-
-    //
+    CANIntClear(CAN0_BASE, ui32Status);
+    
     // If the cause is a controller status interrupt, then get the status
-    //
+    
     if(ui32Status == CAN_INT_INTID_STATUS)
     {
-        //
-        // Read the controller status.  This will return a field of status
-        // error bits that can indicate various errors.  Error processing
-        // is not done in this example for simplicity.  Refer to the
-        // API documentation for details about the error status bits.
-        // The act of reading this status will clear the interrupt.
-        //
         ui32Status = CANStatusGet(CAN0_BASE, CAN_STS_CONTROL);
-
-        //
-        // Set a flag to indicate some errors may have occurred.
-        //
-        g_bErrFlag_uart5 = 1;
-        g_bErrFlag_uart6 = 1;
-        g_bErrFlag_uart7 = 1;
+        if(ui32Status & CAN_STATUS_TXOK)
+        {
+            ++can_tx_ok_counter;
+        }
+        else if(ui32Status == CAN_STATUS_RXOK)
+        {
+            ++can_rx_ok_counter;
+        }
+        else
+        {
+            can_err_flag = 1U;
+            ++can_err_counter;
+        }
     }
-
-    else if(ui32Status == 1)
-    {
-        CANIntClear(CAN0_BASE, 1);
-    }
-
-    //
-    // Check if the cause is message object 1, which what we are using for
-    // receiving messages.
-    //
-    else if(ui32Status == 2)
-    {
-        //
-        // Getting to this point means that the RX interrupt occurred on
-        // message object 1, and the message reception is complete.  Clear the
-        // message object interrupt.
-        //
-        CANIntClear(CAN0_BASE, 2);
-
-        //
-        // Set flag to indicate received message is pending.
-        //
-        g_bRXFlag_uart5 = 1;
-
-        //
-        // Since a message was received, clear any error flags.
-        //
-        g_bErrFlag_uart5 = 0;
-    }
-
-    else if(ui32Status == 3)
-    {
-        //
-        // Getting to this point means that the RX interrupt occurred on
-        // message object 1, and the message reception is complete.  Clear the
-        // message object interrupt.
-        //
-        CANIntClear(CAN0_BASE, 3);
-
-        //
-        // Set flag to indicate received message is pending.
-        //
-        g_bRXFlag_uart6 = 1;
-
-        //
-        // Since a message was received, clear any error flags.
-        //
-        g_bErrFlag_uart6 = 0;
-    }
-
-    else if(ui32Status == 4)
-    {
-        //
-        // Getting to this point means that the RX interrupt occurred on
-        // message object 1, and the message reception is complete.  Clear the
-        // message object interrupt.
-        //
-        CANIntClear(CAN0_BASE, 4);
-
-        //
-        // Set flag to indicate received message is pending.
-        //
-        g_bRXFlag_uart7 = 1;
-
-        //
-        // Since a message was received, clear any error flags.
-        //
-        g_bErrFlag_uart7 = 0;
-    }
-
-    //
-    // Otherwise, something unexpected caused the interrupt.  This should
-    // never happen.
-    //
     else
     {
-        //
-        // Spurious interrupt handling can go here.
-        //
+        switch(ui32Status)
+        {
+            /*
+                TX interrupts not processed within ISR for now... need to fix this to improve CAN<->UART bandwidth!!!
+             */
+            case 1:
+                CANMessageGet(CAN0_BASE, 1, &sMsgObjectRx, true); // If we ever get here, clear the interrupt through a dummy read.
+                break;
+            case 2:
+                CANMessageGet(CAN0_BASE, 2, &sMsgObjectRx, true);
+                break;
+            case 3:
+                CANMessageGet(CAN0_BASE, 3, &sMsgObjectRx, true);
+                break;
+            case 4:
+                CANIntClear(CAN0_BASE, 4);
+                serialport_highlevel_rx_isr(uart5_can_port_ptr);
+                break;
+            case 5:
+                CANIntClear(CAN0_BASE, 5);
+                serialport_highlevel_rx_isr(uart6_can_port_ptr);
+                break;
+            case 6:
+                CANIntClear(CAN0_BASE, 6);
+                serialport_highlevel_rx_isr(uart7_can_port_ptr);
+                break;
+            default:
+                can_err_flag = 2U;
+                ++can_err_counter;
+                CANIntClear(CAN0_BASE, ui32Status);
+                CANMessageGet(CAN0_BASE, ui32Status, &sMsgObjectRx, 1);
+                break;
+        }
         CANIntClear(CAN0_BASE, ui32Status);
     }
 }
 
 int main(void)
 {
-    SysCtlClockSet(SYSCTL_SYSDIV_1 | SYSCTL_USE_OSC | SYSCTL_OSC_MAIN | SYSCTL_XTAL_16MHZ);
+    _disable_interrupts();
+    /*
+        Zero all error flags and CAN bus counters: 
+     */
+    can_err_counter = 0U;
+    can_tx_ok_counter = 0U;
+    can_rx_ok_counter = 0U;
+    can_err_flag = 0U;
 
-    g_bRXFlag_uart5 = 0;
-    g_bErrFlag_uart5 = 0;
+    SysCtlClockSet(SYSCTL_SYSDIV_2_5 | SYSCTL_USE_PLL | SYSCTL_OSC_MAIN | SYSCTL_XTAL_16MHZ);
 
-    g_bRXFlag_uart6 = 0;
-    g_bErrFlag_uart6 = 0;
+    serialport_hal_init();
 
-    g_bRXFlag_uart7 = 0;
-    g_bErrFlag_uart7 = 0;
+    // _enable_interrupts();
+    // while(1);
 
-    uart5_setup();
-    uart6_setup();
-    uart7_setup();
+    // serialport_init(&uart5_port, UART5);
+    // uart5_port_ptr = &uart5_port;
 
-    can0_init();
+    // serialport_init(&uart6_port, UART6);
+    // uart6_port_ptr = &uart6_port;
 
-    uint8_t can_rx_data_uart5[8];
-    uint8_t can_rx_data_uart6[8];
-    uint8_t can_rx_data_uart7[8];
+    serialport_init(&uart7_port, UART7);
+    uart7_port_ptr = &uart7_port;
 
-    tCANMsgObject sMsgObjectRx_uart5;
-    sMsgObjectRx_uart5.ui32MsgID = 0xC0000002;
-    sMsgObjectRx_uart5.ui32MsgIDMask = 0xFFFF;
-    sMsgObjectRx_uart5.ui32Flags = MSG_OBJ_RX_INT_ENABLE | MSG_OBJ_USE_ID_FILTER;
-    sMsgObjectRx_uart5.ui32MsgLen = 1;
-    CANMessageSet(CAN0_BASE, 2, &sMsgObjectRx_uart5, MSG_OBJ_TYPE_RX);
+    // serialport_init(&uart5_can_port, CAN_ENCAP_UART5);
+    // uart5_can_port_ptr = &uart5_can_port;
 
-    tCANMsgObject sMsgObjectRx_uart6;
-    sMsgObjectRx_uart6.ui32MsgID = 0xC0000004;
-    sMsgObjectRx_uart6.ui32MsgIDMask = 0xFFFF;
-    sMsgObjectRx_uart6.ui32Flags = MSG_OBJ_RX_INT_ENABLE | MSG_OBJ_USE_ID_FILTER;
-    sMsgObjectRx_uart6.ui32MsgLen = 1;
-    CANMessageSet(CAN0_BASE, 3, &sMsgObjectRx_uart6, MSG_OBJ_TYPE_RX);
+    // serialport_init(&uart6_can_port, CAN_ENCAP_UART6);
+    // uart6_can_port_ptr = &uart6_can_port;
 
-    tCANMsgObject sMsgObjectRx_uart7;
-    sMsgObjectRx_uart7.ui32MsgID = 0xC0000006;
-    sMsgObjectRx_uart7.ui32MsgIDMask = 0xFFFF;
-    sMsgObjectRx_uart7.ui32Flags = MSG_OBJ_RX_INT_ENABLE | MSG_OBJ_USE_ID_FILTER;
-    sMsgObjectRx_uart7.ui32MsgLen = 1;
-    CANMessageSet(CAN0_BASE, 4, &sMsgObjectRx_uart7, MSG_OBJ_TYPE_RX);
+    // serialport_init(&uart7_can_port, CAN_ENCAP_UART7);
+    // uart7_can_port_ptr = &uart7_can_port;
 
-    // GPIO Setup for LED Blinky:
-    #ifdef GPIO_TEST
-        SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOK);
-        while(!SysCtlPeripheralReady(SYSCTL_PERIPH_GPIOK));
-        GPIOPinTypeGPIOOutput(GPIO_PORTK_BASE, GPIO_PIN_0);
-        GPIOPinWrite(GPIO_PORTK_BASE, GPIO_PIN_0, GPIO_PIN_0);
+    _enable_interrupts();
+
+    #ifdef HELLO_WORLD_TEST
+        // serialport_send_data_buffer(uart5_port_ptr, (uint8_t *)"Hello UART5!!\r\n", 15U);
+        // serialport_send_data_buffer(uart6_port_ptr, (uint8_t *)"Hello UART6!!\r\n", 15U);
+        serialport_send_data_buffer(uart7_port_ptr, (uint8_t *)"Hello UART7!!\r\n", 15U);
+        // while(1);
+
+        // serialport_send_data_buffer(uart5_can_port_ptr, (uint8_t *)"Hello CAN_UART5!!\r\n", 19U);
+        // serialport_send_data_buffer(uart6_can_port_ptr, (uint8_t *)"Hello CAN_UART6!!\r\n", 19U);
+        // serialport_send_data_buffer(uart7_can_port_ptr, (uint8_t *)"Hello CAN_UART7!!\r\n", 19U);
     #endif
+
+    uint8_t buf[SERIAL_BUF_LEN];
+    uint32_t bytes_recv;
+
+    uint8_t can_channel = 1U;
 
     while(1)
     {
-        if(g_bRXFlag_uart5 > 0)
+        // if(can_err_flag > 0U)
+        // {
+        //     _disable_interrupts();
+        //     while(1)
+        //     {
+        //         UARTCharPut(UART7_BASE, 'e');
+        //     }
+        // }
+
+        /*
+            Process pending CAN transmissions in a round-robbin fashion.
+            If a given "channel" has no bytes in buffer, it'll just return immediately and yield to this "executive"...
+         */
+
+        // if(CANStatusGet(CAN0_BASE, CAN_STS_TXREQUEST)==0) // If no TX messages are pending, go ahead and transmit whatever is on the buffers
+        // {
+        //     switch(can_channel)
+        //     {
+        //         case 1U:
+        //             serialport_highlevel_tx_isr(uart5_can_port_ptr);
+        //             ++can_channel;
+        //             break;
+        //         case 2U:
+        //             serialport_highlevel_tx_isr(uart6_can_port_ptr);
+        //             ++can_channel;
+        //             break;
+        //         case 3U:
+        //             serialport_highlevel_tx_isr(uart7_can_port_ptr);
+        //             can_channel = 1U;
+        //             break;
+        //     }
+        // }
+        /*
+            Forwarding relationships from actual UARTs on TM4C to CAN bus:
+            In all cases below, we attempt to read SERIAL_BUF_LEN number of bytes into "buf", in an asynchronous fashion.
+         */
+        // bytes_recv = serialport_receive_data_buffer(uart5_port_ptr, buf, SERIAL_BUF_LEN);
+        // if(bytes_recv > 0U)
+        // {
+        //     serialport_send_data_buffer(uart5_can_port_ptr, buf, bytes_recv);
+        // }
+
+        // bytes_recv = serialport_receive_data_buffer(uart6_port_ptr, buf, SERIAL_BUF_LEN);
+        // if(bytes_recv > 0U)
+        // {
+        //     serialport_send_data_buffer(uart6_can_port_ptr, buf, bytes_recv);
+        // }
+
+        bytes_recv = serialport_receive_data_buffer(uart7_port_ptr, buf, SERIAL_BUF_LEN);
+        if(bytes_recv > 0U)
         {
-            g_bRXFlag_uart5 = 0;
-            sMsgObjectRx_uart5.pui8MsgData = can_rx_data_uart5;
-            CANMessageGet(CAN0_BASE, 2, &sMsgObjectRx_uart5, 0);
-            while(UARTBusy(UART5_BASE));
-            UARTCharPutNonBlocking(UART5_BASE, can_rx_data_uart5[0]);            
+            serialport_send_data_buffer(uart7_port_ptr, buf, bytes_recv);
         }
 
-        if(g_bRXFlag_uart6 > 0)
-        {
-            g_bRXFlag_uart6 = 0;
-            sMsgObjectRx_uart6.pui8MsgData = can_rx_data_uart6;
-            CANMessageGet(CAN0_BASE, 3, &sMsgObjectRx_uart6, 0);
-            while(UARTBusy(UART6_BASE));
-            UARTCharPutNonBlocking(UART6_BASE, can_rx_data_uart6[0]);
-        }
+        /*
+            Forwarding relationships from CAN bus to actual UARTs on TM4C:
+            In all cases below, we attempt to read SERIAL_BUF_LEN number of bytes into "buf", in an asynchronous fashion.
+         */
+        // bytes_recv = serialport_receive_data_buffer(uart5_can_port_ptr, buf, SERIAL_BUF_LEN);
+        // if(bytes_recv > 0U)
+        // {
+        //     serialport_send_data_buffer(uart5_port_ptr, buf, bytes_recv);
+        // }
 
-        if(g_bRXFlag_uart7 > 0)
-        {
-            g_bRXFlag_uart7 = 0;
-            sMsgObjectRx_uart7.pui8MsgData = can_rx_data_uart7;
-            CANMessageGet(CAN0_BASE, 4, &sMsgObjectRx_uart7, 0);
-            while(UARTBusy(UART7_BASE));
-            UARTCharPutNonBlocking(UART7_BASE, can_rx_data_uart7[0]);
-        }
+        // bytes_recv = serialport_receive_data_buffer(uart6_can_port_ptr, buf, SERIAL_BUF_LEN);
+        // if(bytes_recv > 0U)
+        // {
+        //     serialport_send_data_buffer(uart6_port_ptr, buf, bytes_recv);
+        // }
 
-        #ifdef GPIO_TEST
-            ROM_GPIOPinWrite(GPIO_PORTK_BASE, GPIO_PIN_0, GPIO_PIN_0);
-            ROM_SysCtlDelay(5000000);
-            ROM_GPIOPinWrite(GPIO_PORTK_BASE, GPIO_PIN_0, 0);
-            ROM_SysCtlDelay(5000000);
-        #endif
+        // bytes_recv = serialport_receive_data_buffer(uart7_can_port_ptr, buf, SERIAL_BUF_LEN);
+        // if(bytes_recv > 0U)
+        // {
+        //     serialport_send_data_buffer(uart7_port_ptr, buf, bytes_recv);
+        // }
     }
 }
+
+// int main(void)
+// {
+//     _disable_interrupts();
+    
+//     SysCtlClockSet(SYSCTL_SYSDIV_2_5 | SYSCTL_USE_PLL | SYSCTL_OSC_MAIN | SYSCTL_XTAL_16MHZ);
+
+//     SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOF);
+//     while(!SysCtlPeripheralReady(SYSCTL_PERIPH_GPIOF));
+//     HWREG(GPIO_PORTF_BASE + GPIO_O_LOCK) = GPIO_LOCK_KEY; //Unlock GPIO_CR register with this magic value
+//     HWREG(GPIO_PORTF_BASE + GPIO_O_CR) = 0xFF;
+
+//     GPIOPinConfigure(GPIO_PF0_CAN0RX);
+//     GPIOPinConfigure(GPIO_PF3_CAN0TX); 
+//     GPIOPinTypeCAN(GPIO_PORTF_BASE, GPIO_PIN_0 | GPIO_PIN_3);
+
+//     SysCtlPeripheralEnable(SYSCTL_PERIPH_CAN0);
+//     while(!SysCtlPeripheralReady(SYSCTL_PERIPH_CAN0));
+//     CANInit(CAN0_BASE);
+//     CANBitRateSet(CAN0_BASE, SysCtlClockGet(), 500000);
+//     CANMessageClear(CAN0_BASE, 1);
+//     CANMessageClear(CAN0_BASE, 2);
+//     CANMessageClear(CAN0_BASE, 3);
+//     CANEnable(CAN0_BASE);
+//     CANRetrySet(CAN0_BASE, false);
+
+//     tCANMsgObject sCANMessage;
+//     uint8_t can_msg_contents[8];
+//     can_msg_contents[0] = 0U;
+
+//     sCANMessage.ui32MsgIDMask = 0xF; // Do we need this for TX objects?? We'll find out :)
+//     sCANMessage.ui32Flags = MSG_OBJ_TX_INT_ENABLE;
+//     sCANMessage.ui32MsgLen = 1;
+//     sCANMessage.pui8MsgData = can_msg_contents;
+//     sCANMessage.ui32MsgID = 0x60000003;
+
+//     // while((CANStatusGet(CAN0_BASE, CAN_STS_TXREQUEST))&0x01!=0);//&0x01==0x01);
+//     // while((CANStatusGet(CAN0_BASE, CAN_STS_TXREQUEST))&0x02!=0);//&0x01==0x01);
+//     // while((CANStatusGet(CAN0_BASE, CAN_STS_TXREQUEST))&0x04!=0);//&0x01==0x01);
+//     while((CANStatusGet(CAN0_BASE, CAN_STS_TXREQUEST))!=0);
+//     CANMessageSet(CAN0_BASE, 2, &sCANMessage, MSG_OBJ_TYPE_TX);
+//     // uint32_t stat = HWREG(CAN0_BASE + CAN_O_STS);
+//     // while(stat & CAN_STS_TXOK == 0)
+//     // {
+//     //     stat = HWREG(CAN0_BASE + CAN_O_STS);
+//     // }
+//     // HWREG(CAN0_BASE + CAN_O_STS) = ~(CAN_STS_RXOK | CAN_STS_TXOK |
+//     //                                         CAN_STS_LEC_M);
+
+//     while(1)
+//     {
+//         ++can_msg_contents[0];
+
+//         // while((CANStatusGet(CAN0_BASE, CAN_STS_TXREQUEST))&0x01!=0);//&0x01==0x01);
+//         // while((CANStatusGet(CAN0_BASE, CAN_STS_TXREQUEST))&0x02!=0);//&0x01==0x01);
+//         // while((CANStatusGet(CAN0_BASE, CAN_STS_TXREQUEST))&0x04!=0);//&0x01==0x01);
+//         while((CANStatusGet(CAN0_BASE, CAN_STS_TXREQUEST))!=0);        
+//         CANMessageSet(CAN0_BASE, 2, &sCANMessage, MSG_OBJ_TYPE_TX);
+//         SysCtlDelay(10000);
+//         // while ((CANStatusGet(CAN0_BASE, CAN_STS_CONTROL)&CAN_STS_TXOK)==0);
+//         // stat = HWREG(CAN0_BASE + CAN_O_STS);
+//         // while(stat & CAN_STS_TXOK == 0)
+//         // {
+//         //     stat = HWREG(CAN0_BASE + CAN_O_STS);           
+//         // }
+//         // HWREG(CAN0_BASE + CAN_O_STS) = ~(CAN_STS_RXOK | CAN_STS_TXOK |
+//         //                                     CAN_STS_LEC_M);  
+//     }
+// }
